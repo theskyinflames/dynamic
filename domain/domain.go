@@ -1,6 +1,9 @@
 package domain
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 /// Javascript https://github.com/rogchap/v8go
 
@@ -14,11 +17,14 @@ type Param struct {
 // Sync is a sync flag
 type Sync <-chan struct{}
 
+// JobIn is self described
+type JobIn <-chan Param
+
 // JobOut is self described
-type JobOut <-chan Param
+type JobOut chan Param
 
 // Job is a worker job
-type Job func(Param, Sync) JobOut
+type Job func(JobIn, JobOut)
 
 // Worker execute jobs
 type Worker struct {
@@ -27,8 +33,21 @@ type Worker struct {
 }
 
 // Run runs the worker job
-func (w Worker) Run(in Param, s Sync) {
-	w.out = w.job(in, s)
+func (w Worker) Run(ctx context.Context, wg *sync.WaitGroup, in <-chan Param, s Sync) {
+	wg.Add(1)
+	go func() {
+	ends:
+		for {
+			select {
+			case <-s:
+				w.job(in, w.out)
+				break ends
+			case <-ctx.Done():
+				break ends
+			}
+		}
+		wg.Done()
+	}()
 }
 
 // Out is a Getter
@@ -62,11 +81,9 @@ func NewWorker(job Job, opts ...WorkerOpt) Worker {
 
 // NewBlockerJoinWorker is a constructor
 // See this article https://medium.com/justforfunc/two-ways-of-merging-n-channels-in-go-43c0b57cd1de
-func NewBlockerJoinWorker(ws []Worker, s Sync) Worker {
+func NewBlockerJoinWorker(ws []Worker) Worker {
 	out := make(chan Param)
-
-	var job Job = func(in Param, s Sync) JobOut {
-		<-s
+	var job Job = func(in JobIn, _ JobOut) {
 		wg := sync.WaitGroup{}
 		wg.Add(len(ws))
 		for _, w := range ws {
@@ -77,7 +94,6 @@ func NewBlockerJoinWorker(ws []Worker, s Sync) Worker {
 			}(w.Out())
 		}
 		wg.Wait()
-		return out
 	}
 	return NewWorker(job, OutOpt(out))
 }
