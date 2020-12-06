@@ -2,10 +2,11 @@ package domain
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
-/// Javascript https://github.com/rogchap/v8go
+/// Javascript tasks ? https://github.com/rogchap/v8go
 
 // Param is a worker in/out param
 type Param struct {
@@ -24,12 +25,13 @@ type JobIn <-chan Param
 type JobOut chan Param
 
 // Job is a worker job
-type Job func(JobIn, JobOut)
+type Job func(context.Context, *sync.WaitGroup, JobIn, JobOut)
 
 // Worker execute jobs
 type Worker struct {
-	out JobOut
-	job Job
+	name string
+	out  JobOut
+	job  Job
 }
 
 // Run runs the worker job
@@ -40,13 +42,14 @@ func (w Worker) Run(ctx context.Context, wg *sync.WaitGroup, in <-chan Param, s 
 		for {
 			select {
 			case <-s:
-				w.job(in, w.out)
+				w.job(ctx, wg, in, w.out)
 				break ends
 			case <-ctx.Done():
 				break ends
 			}
 		}
 		wg.Done()
+		fmt.Println("finish worker", w.name)
 	}()
 }
 
@@ -66,10 +69,11 @@ func OutOpt(out JobOut) WorkerOpt {
 }
 
 // NewWorker is a constructor
-func NewWorker(job Job, opts ...WorkerOpt) Worker {
+func NewWorker(name string, job Job, opts ...WorkerOpt) Worker {
 	w := Worker{
-		out: make(chan Param),
-		job: job,
+		name: name,
+		out:  make(chan Param),
+		job:  job,
 	}
 
 	for _, opt := range opts {
@@ -79,21 +83,32 @@ func NewWorker(job Job, opts ...WorkerOpt) Worker {
 	return w
 }
 
-// NewBlockerJoinWorker is a constructor
+// NewJoinWorker is a constructor
 // See this article https://medium.com/justforfunc/two-ways-of-merging-n-channels-in-go-43c0b57cd1de
-func NewBlockerJoinWorker(ws []Worker) Worker {
+func NewJoinWorker(name string, ws []Worker) Worker {
 	out := make(chan Param)
-	var job Job = func(in JobIn, _ JobOut) {
-		wg := sync.WaitGroup{}
-		wg.Add(len(ws))
-		for _, w := range ws {
+	var job Job = func(ctx context.Context, wg *sync.WaitGroup, _ JobIn, _ JobOut) {
+		for i := range ws {
+			w := ws[i]
+			wg.Add(1)
 			go func(c JobOut) {
-				for param := range c {
-					out <- param
+				fmt.Println("start reading join worker", w.name)
+				for {
+					select {
+					case <-ctx.Done():
+						wg.Done()
+						fmt.Println("stop reading join worker", w.name)
+						return
+					case v := <-c:
+						out <- v
+						fmt.Println("join sends: ", fmt.Sprint(v.Value))
+					}
 				}
+
 			}(w.Out())
 		}
 		wg.Wait()
+		fmt.Println("join job ends", name)
 	}
-	return NewWorker(job, OutOpt(out))
+	return NewWorker(name, job, OutOpt(out))
 }
