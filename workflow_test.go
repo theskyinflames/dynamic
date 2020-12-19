@@ -1,4 +1,4 @@
-package domain_test
+package main_test
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"context"
 
 	"github.com/stretchr/testify/require"
-	"github.com/theskyinflames/dynamic-go/domain"
+	main "github.com/theskyinflames/dynamic-go"
 )
 
 // * --> JOB1() --> JOB2() --> x --> (output consumer)
@@ -20,7 +20,7 @@ func TestLinearFlow(t *testing.T) {
 	then all works well`, func(t *testing.T) {
 
 		// Create the workflow workers
-		job1 := func(ctx context.Context, postman domain.Postman) {
+		job1 := func(ctx context.Context, postman main.Postman) {
 			for {
 				select {
 				case <-ctx.Done():
@@ -41,10 +41,10 @@ func TestLinearFlow(t *testing.T) {
 				}
 			}
 		}
-		w1In := make(chan domain.Param)
-		w1 := domain.NewWorker(job1, w1In, domain.NameOpt("w1"))
+		w1In := make(chan main.Param)
+		w1 := main.NewWorker(job1, w1In, main.NameOpt("w1"))
 
-		job2 := func(ctx context.Context, postman domain.Postman) {
+		job2 := func(ctx context.Context, postman main.Postman) {
 			for {
 				select {
 				case <-ctx.Done():
@@ -65,20 +65,19 @@ func TestLinearFlow(t *testing.T) {
 				}
 			}
 		}
-		w2 := domain.NewWorker(job2, domain.JobIn(w1.Out()), domain.NameOpt("w2"))
+		w2 := main.NewWorker(job2, main.JobIn(w1.Out()), main.NameOpt("w2"))
 
 		// Create the workflow and add the workers
 		ctx, cancelFunc := context.WithCancel(context.Background())
-		flow := domain.NewFlow(ctx)
+		flow := main.NewFlow(ctx)
 		flow.AddWorker(w1)
 		flow.AddWorker(w2)
 
 		// Start workflow workers
-		require.NoError(flow.WakeUpWorkers())
 		flow.Run()
 
 		// Fixture data to feed the workflow
-		values := []domain.Param{
+		values := []main.Param{
 			{Value: float64(10)},
 			{Value: float64(32)},
 			{Value: math.MaxFloat64},
@@ -89,17 +88,17 @@ func TestLinearFlow(t *testing.T) {
 
 		// This goroutine implements a consumer for the workflow output
 		var (
-			i                     = 0
 			allValuesReceivedChan = make(chan struct{})
+			receivedValues        []main.Param
 		)
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case <-w2.Out():
-					i++
-					if i == len(values) {
+				case p := <-w2.Out():
+					receivedValues = append(receivedValues, p)
+					if len(receivedValues) == len(values) {
 						close(allValuesReceivedChan)
 					}
 				}
@@ -117,6 +116,8 @@ func TestLinearFlow(t *testing.T) {
 		// Finish the workflow
 		cancelFunc()
 		flow.Kill()
+
+		require.Equal(values, receivedValues)
 	})
 }
 
@@ -131,7 +132,7 @@ func TestJoin(t *testing.T) {
 	then the third job does not start until the two before start too`, func(t *testing.T) {
 
 		// Create workers
-		job1 := func(ctx context.Context, postman domain.Postman) {
+		job1 := func(ctx context.Context, postman main.Postman) {
 			for {
 				select {
 				case <-ctx.Done():
@@ -152,10 +153,10 @@ func TestJoin(t *testing.T) {
 				}
 			}
 		}
-		w1In := make(chan domain.Param)
-		w1 := domain.NewWorker(job1, w1In, domain.NameOpt("w1"))
+		w1In := make(chan main.Param)
+		w1 := main.NewWorker(job1, w1In, main.NameOpt("w1"))
 
-		job2 := func(ctx context.Context, postman domain.Postman) {
+		job2 := func(ctx context.Context, postman main.Postman) {
 			for {
 				select {
 				case <-ctx.Done():
@@ -176,13 +177,13 @@ func TestJoin(t *testing.T) {
 				}
 			}
 		}
-		w2In := make(chan domain.Param)
-		w2 := domain.NewWorker(job2, w2In, domain.NameOpt("w2"))
+		w2In := make(chan main.Param)
+		w2 := main.NewWorker(job2, w2In, main.NameOpt("w2"))
 
 		// This an special worker that acts like a join in the workflow
-		join1 := domain.NewJoinWorker([]domain.Worker{w1, w2}, domain.NameOpt("join1"))
+		join1 := main.NewJoinWorker([]main.Worker{w1, w2}, main.NameOpt("join1"))
 
-		job3 := func(ctx context.Context, postman domain.Postman) {
+		job3 := func(ctx context.Context, postman main.Postman) {
 			max := float64(math.MinInt64)
 			for {
 				select {
@@ -202,7 +203,7 @@ func TestJoin(t *testing.T) {
 						if n > max {
 							max = n
 						}
-						p := domain.Param{Value: max}
+						p := main.Param{Value: max}
 						for {
 							if postman.Send(ctx, p) {
 								break
@@ -212,11 +213,11 @@ func TestJoin(t *testing.T) {
 				}
 			}
 		}
-		w3 := domain.NewWorker(job3, domain.JobIn(join1.Out()), domain.NameOpt("w3"))
+		w3 := main.NewWorker(job3, main.JobIn(join1.Out()), main.NameOpt("w3"))
 
 		// create the flow
 		ctx, cancelFunc := context.WithCancel(context.Background())
-		flow := domain.NewFlow(ctx)
+		flow := main.NewFlow(ctx)
 
 		// Add workers to the workflow
 		flow.AddWorker(w1)
@@ -224,12 +225,11 @@ func TestJoin(t *testing.T) {
 		flow.AddWorker(join1)
 		flow.AddWorker(w3)
 
-		// Start the workflow jobs
-		require.NoError(flow.WakeUpWorkers())
+		// Start the workflow
 		flow.Run()
 
 		// Fixtures to feed the workflow
-		values := []domain.Param{
+		values := []main.Param{
 			{Value: float64(10)},
 			{Value: float64(32)},
 			{Value: math.MaxFloat64},
@@ -240,7 +240,7 @@ func TestJoin(t *testing.T) {
 
 		// Start the workflow output consumer
 		var (
-			p                     domain.Param
+			p                     main.Param
 			max                   float64
 			ok                    bool
 			i                     = 0

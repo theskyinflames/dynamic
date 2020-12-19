@@ -1,4 +1,4 @@
-package domain
+package main
 
 import (
 	"context"
@@ -159,10 +159,6 @@ func NewJoinWorker(ws []Worker, opts ...WorkerOpt) Worker {
 		for i := range ws {
 			w := ws[i]
 			go func(w Worker, postman Postman) {
-				defer func() {
-					fmt.Printf("join: stop reading (%s)(%s)\n", w.name, w.uuid.String())
-				}()
-				fmt.Printf("join: start reading (%s)(%s)\n", w.name, w.uuid.String())
 				for {
 					select {
 					case <-ctx.Done():
@@ -174,7 +170,6 @@ func NewJoinWorker(ws []Worker, opts ...WorkerOpt) Worker {
 							return
 						}
 						postman.Send(ctx, v)
-						fmt.Println("join sends: ", fmt.Sprint(v.Value))
 					}
 				}
 			}(w, postman)
@@ -208,20 +203,20 @@ func NewFlow(ctx context.Context) Flow {
 
 // AddWorker is self described
 func (f Flow) AddWorker(w Worker) {
-	fmt.Printf("Adding worker %s\n (%s) with in %#v\n", w.uuid.String(), w.name, w.in)
 	f.workers[w.uuid] = w
 }
 
 // WakeUpWorkers is self described
-func (f Flow) WakeUpWorkers() error {
+func (f Flow) WakeUpWorkers() {
 	for uuid := range f.workers {
 		f.workers[uuid].wakeUp(f.ctx, f.startChan)
 	}
-	return nil
+	return
 }
 
 // Run is self described
 func (f Flow) Run() {
+	f.WakeUpWorkers()
 	go func() {
 		defer func() {
 			fmt.Println("finish flow loop")
