@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"testing"
-	"time"
 
 	"context"
 
@@ -12,23 +11,22 @@ import (
 	"github.com/theskyinflames/dynamic-go/domain"
 )
 
-// *-->JOB1()-->JOB2()-->x
-
+// * --> JOB1() --> JOB2() --> x --> (output consumer)
 func TestLinearFlow(t *testing.T) {
 	require := require.New(t)
 
 	t.Run(`Given a workflow with two sequential jobs,
 	when the work runs,
 	then all works well`, func(t *testing.T) {
+
+		// Create the workflow workers
 		job1 := func(ctx context.Context, postman domain.Postman) {
-			fmt.Printf("job %s started\n", "w1")
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 					v, err := postman.Receive(ctx)
-					fmt.Printf("job %s received %#v\n", "w1", v)
 					if err != nil {
 						fmt.Println(err.Error())
 						return
@@ -43,18 +41,16 @@ func TestLinearFlow(t *testing.T) {
 				}
 			}
 		}
-		w1In := make(chan domain.Param, 1)
+		w1In := make(chan domain.Param)
 		w1 := domain.NewWorker(job1, w1In, domain.NameOpt("w1"))
 
 		job2 := func(ctx context.Context, postman domain.Postman) {
-			fmt.Printf("job %s started\n", "w2")
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 					v, err := postman.Receive(ctx)
-					fmt.Printf("job %s received %#v\n", "w2", v)
 					if err != nil {
 						fmt.Println(err.Error())
 						return
@@ -71,64 +67,77 @@ func TestLinearFlow(t *testing.T) {
 		}
 		w2 := domain.NewWorker(job2, domain.JobIn(w1.Out()), domain.NameOpt("w2"))
 
+		// Create the workflow and add the workers
 		ctx, cancelFunc := context.WithCancel(context.Background())
 		flow := domain.NewFlow(ctx)
 		flow.AddWorker(w1)
 		flow.AddWorker(w2)
+
+		// Start workflow workers
 		require.NoError(flow.WakeUpWorkers())
 		flow.Run()
 
-		fmt.Printf("w1In: %#v\n", w1In)
-		fmt.Printf("w2In: %#v\n", w2.Out())
-
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case p := <-w2.Out():
-					fmt.Printf("received out %f", p.Value.(float64))
-				}
-			}
-		}()
-
-		for _, value := range []domain.Param{
+		// Fixture data to feed the workflow
+		values := []domain.Param{
 			{Value: float64(10)},
 			{Value: float64(32)},
 			{Value: math.MaxFloat64},
 			{Value: float64(999999)},
 			{Value: float64(-45)},
 			{Value: float64(100)},
-		} {
-			fmt.Printf("test to send to w1 %#v\n", w1In)
-			w1In <- value
-			fmt.Printf("test sent to w1 %#v\n", w1In)
 		}
 
-		time.Sleep(time.Second)
+		// This goroutine implements a consumer for the workflow output
+		var (
+			i                     = 0
+			allValuesReceivedChan = make(chan struct{})
+		)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-w2.Out():
+					i++
+					if i == len(values) {
+						close(allValuesReceivedChan)
+					}
+				}
+			}
+		}()
+
+		// Feed the workflow
+		for _, value := range values {
+			w1In <- value
+		}
+
+		// Wait for all fixtures processed
+		<-allValuesReceivedChan
+
+		// Finish the workflow
 		cancelFunc()
 		flow.Kill()
 	})
 }
 
 // * --> JOB1() -->	|
-//             		| --> JOB3() --> x
+//             		| --> JOB3() --> x --> (output consumer)
 // * --> JOB2() -->	|
-func TestContinuousJoin(t *testing.T) {
+func TestJoin(t *testing.T) {
 	require := require.New(t)
 
 	t.Run(`Given two parallel jobs that joins to a third job,
 	when the workflow runs, 
 	then the third job does not start until the two before start too`, func(t *testing.T) {
+
+		// Create workers
 		job1 := func(ctx context.Context, postman domain.Postman) {
-			fmt.Printf("job %s started\n", "w1")
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 					v, err := postman.Receive(ctx)
-					fmt.Printf("job %s received %#v\n", "w1", v)
 					if err != nil {
 						fmt.Println(err.Error())
 						return
@@ -143,18 +152,16 @@ func TestContinuousJoin(t *testing.T) {
 				}
 			}
 		}
-		w1In := make(chan domain.Param, 1)
+		w1In := make(chan domain.Param)
 		w1 := domain.NewWorker(job1, w1In, domain.NameOpt("w1"))
 
 		job2 := func(ctx context.Context, postman domain.Postman) {
-			fmt.Printf("job %s started\n", "w2")
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 					v, err := postman.Receive(ctx)
-					fmt.Printf("job %s received %#v\n", "w2", v)
 					if err != nil {
 						fmt.Println(err.Error())
 						return
@@ -169,13 +176,13 @@ func TestContinuousJoin(t *testing.T) {
 				}
 			}
 		}
-		w2In := make(chan domain.Param, 2)
+		w2In := make(chan domain.Param)
 		w2 := domain.NewWorker(job2, w2In, domain.NameOpt("w2"))
 
+		// This an special worker that acts like a join in the workflow
 		join1 := domain.NewJoinWorker([]domain.Worker{w1, w2}, domain.NameOpt("join1"))
 
 		job3 := func(ctx context.Context, postman domain.Postman) {
-			fmt.Printf("job %s started\n", "w3")
 			max := float64(math.MinInt64)
 			for {
 				select {
@@ -207,16 +214,21 @@ func TestContinuousJoin(t *testing.T) {
 		}
 		w3 := domain.NewWorker(job3, domain.JobIn(join1.Out()), domain.NameOpt("w3"))
 
+		// create the flow
 		ctx, cancelFunc := context.WithCancel(context.Background())
 		flow := domain.NewFlow(ctx)
 
+		// Add workers to the workflow
 		flow.AddWorker(w1)
 		flow.AddWorker(w2)
 		flow.AddWorker(join1)
 		flow.AddWorker(w3)
+
+		// Start the workflow jobs
 		require.NoError(flow.WakeUpWorkers())
 		flow.Run()
 
+		// Fixtures to feed the workflow
 		values := []domain.Param{
 			{Value: float64(10)},
 			{Value: float64(32)},
@@ -226,41 +238,46 @@ func TestContinuousJoin(t *testing.T) {
 			{Value: float64(100)},
 		}
 
+		// Start the workflow output consumer
 		var (
-			p   domain.Param
-			max float64
-			ok  bool
+			p                     domain.Param
+			max                   float64
+			ok                    bool
+			i                     = 0
+			allValuesReceivedChan = make(chan struct{})
 		)
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
-					fmt.Println("finish test job")
 					return
 				case p, ok = <-w3.Out():
 					if !ok {
 						return
 					}
 					max = p.Value.(float64)
-					fmt.Printf("New max: %f\n", max)
+					i++
+					if i == len(values) {
+						// force the end of the workflow
+						close(allValuesReceivedChan)
+					}
 				}
 			}
 		}()
 
-		fmt.Printf("w1In: %#v\n", w1In)
-		fmt.Printf("w2In: %#v\n", w2In)
-
+		// Feed the workflow
 		for i := range values {
 			if i%2 == 0 {
-				fmt.Printf("test sent to w1 %#v\n", w1In)
 				w1In <- values[i]
 			} else {
-				fmt.Printf("test sent to w2 %#v\n", w1In)
 				w2In <- values[i]
 			}
 		}
 
-		time.Sleep(time.Second)
+		// Wait for all fixture data has been read
+		<-allValuesReceivedChan
+
+		// Finish the workflow
 		cancelFunc()
 		flow.Kill()
 

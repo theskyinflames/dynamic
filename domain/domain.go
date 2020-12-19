@@ -9,8 +9,6 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-/// Javascript tasks ? https://github.com/rogchap/v8go
-
 // Param is a worker in/out param
 type Param struct {
 	Err   error
@@ -59,7 +57,7 @@ func NameOpt(name string) WorkerOpt {
 func NewWorker(job Job, in JobIn, opts ...WorkerOpt) Worker {
 	w := Worker{
 		uuid: uuid.NewV4(),
-		out:  make(chan Param, 1),
+		out:  make(chan Param),
 		job:  job,
 		in:   in,
 	}
@@ -97,16 +95,13 @@ func (w Worker) Receive(ctx context.Context) (*Param, error) {
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				if len(w.in) > 0 {
-					received, ok := <-w.in
-					if !ok {
-						err = fmt.Errorf("try to read from a closed in chan (%s,%s)", w.name, w.uuid.String())
-						return
-					}
-					p = &received
+			case received, ok := <-w.in:
+				if !ok {
+					err = fmt.Errorf("try to read from a closed in chan (%s,%s)", w.name, w.uuid.String())
 					return
 				}
+				p = &received
+				return
 			}
 		}
 	}()
@@ -122,7 +117,6 @@ func (w Worker) Send(ctx context.Context, p Param) bool {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		fmt.Printf(">>>> worker %s to send %#v\n", w.name, p.Value)
 		defer wg.Done()
 		for {
 			select {
@@ -132,7 +126,6 @@ func (w Worker) Send(ctx context.Context, p Param) bool {
 				if len(w.out) == 0 {
 					w.out <- p
 					sent = true
-					fmt.Printf(">>>++ worker %s sent %#v\n", w.name, p.Value)
 					return
 				}
 			}
