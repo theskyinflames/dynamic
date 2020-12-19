@@ -225,21 +225,14 @@ func (f Flow) WakeUpWorkers() {
 	for uuid := range f.workers {
 		f.workers[uuid].wakeUp(f.ctx, f.startChan)
 	}
-	return
 }
 
 // Run is self described
 func (f Flow) Run() {
 	f.WakeUpWorkers()
 	go func() {
-		for {
-			select {
-			case <-f.ctx.Done():
-				close(f.finishedChan)
-				return
-			default:
-			}
-		}
+		<-f.ctx.Done()
+		close(f.finishedChan)
 	}()
 	close(f.startChan)
 }
