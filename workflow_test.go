@@ -144,7 +144,7 @@ func TestJoin(t *testing.T) {
 
 	t.Run(`Given two parallel jobs that joins to a third job,
 	when the workflow runs, 
-	then the third job does not start until the two before start too`, func(t *testing.T) {
+	then the workflow outputs the result of the third job`, func(t *testing.T) {
 
 		// Create workers
 		job1 := func(ctx context.Context, postman main.Postman) {
