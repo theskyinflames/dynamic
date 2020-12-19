@@ -34,6 +34,9 @@ type Postman interface {
 // Job is a worker job
 type Job func(context.Context, Postman)
 
+// ErrHndFunc is an error handler
+type ErrHndFunc func(error)
+
 // Worker execute jobs
 type Worker struct {
 	uuid uuid.UUID
@@ -41,15 +44,24 @@ type Worker struct {
 	out  JobOut
 	in   JobIn
 	job  Job
+
+	errHndFunc ErrHndFunc
 }
 
 // WorkerOpt  is an constructor option
 type WorkerOpt func(*Worker)
 
-// NameOpt is a name option
+// NameOpt is an option
 func NameOpt(name string) WorkerOpt {
 	return func(w *Worker) {
 		w.name = name
+	}
+}
+
+// ErrHndFuncOpt is an option
+func ErrHndFuncOpt(errHndFunc ErrHndFunc) WorkerOpt {
+	return func(w *Worker) {
+		w.errHndFunc = errHndFunc
 	}
 }
 
@@ -180,25 +192,41 @@ func NewJoinWorker(ws []Worker, opts ...WorkerOpt) Worker {
 
 // Flow is a graph of workers
 type Flow struct {
-	workers   map[uuid.UUID]Worker
-	cf        context.CancelFunc
-	ctx       context.Context
-	startChan chan struct{}
-	tickChan  chan uuid.UUID
-
+	workers      map[uuid.UUID]Worker
+	cf           context.CancelFunc
+	ctx          context.Context
+	startChan    chan struct{}
 	finishedChan chan struct{}
+
+	errHndFunc ErrHndFunc
+}
+
+// FlowOpt is Flow option
+type FlowOpt func(*Flow)
+
+// ErrHndFuncOptFlow is a error handler flow option
+func ErrHndFuncOptFlow(errHndFunc ErrHndFunc) FlowOpt {
+	return func(f *Flow) {
+		f.errHndFunc = errHndFunc
+	}
 }
 
 // NewFlow is a constructor
-func NewFlow(ctx context.Context) Flow {
+func NewFlow(ctx context.Context, opts ...FlowOpt) Flow {
 	ctx, cf := context.WithCancel(ctx)
-	return Flow{
+	f := Flow{
 		workers:      make(map[uuid.UUID]Worker),
 		cf:           cf,
 		ctx:          ctx,
 		startChan:    make(chan struct{}),
 		finishedChan: make(chan struct{}),
 	}
+
+	for _, opt := range opts {
+		opt(&f)
+	}
+
+	return f
 }
 
 // AddWorker is self described
