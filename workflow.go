@@ -58,8 +58,8 @@ func NameOpt(name string) WorkerOpt {
 	}
 }
 
-// ErrHndFuncOpt is an option
-func ErrHndFuncOpt(errHndFunc ErrHndFunc) WorkerOpt {
+// ErrHndFuncWorkerOpt is an option
+func ErrHndFuncWorkerOpt(errHndFunc ErrHndFunc) WorkerOpt {
 	return func(w *Worker) {
 		w.errHndFunc = errHndFunc
 	}
@@ -72,6 +72,8 @@ func NewWorker(job Job, in JobIn, opts ...WorkerOpt) Worker {
 		out:  make(chan Param),
 		job:  job,
 		in:   in,
+
+		errHndFunc: func(error) {},
 	}
 
 	for _, opt := range opts {
@@ -149,7 +151,6 @@ func (w Worker) Send(ctx context.Context, p Param) bool {
 
 func (w Worker) wakeUp(ctx context.Context, s Sync) {
 	go func() {
-		fmt.Printf("start worker (%s)(%s)\n", w.name, w.uuid.String())
 	ends:
 		for {
 			select {
@@ -160,7 +161,6 @@ func (w Worker) wakeUp(ctx context.Context, s Sync) {
 				break ends
 			}
 		}
-		fmt.Printf("finish worker (%s)(%s)\n", w.name, w.uuid.String())
 	}()
 }
 
@@ -178,7 +178,7 @@ func NewJoinWorker(ws []Worker, opts ...WorkerOpt) Worker {
 					default:
 						v, ok := <-w.Out()
 						if !ok {
-							fmt.Println(fmt.Printf("join: channel worker %s is closed\n", w.name))
+							w.errHndFunc(fmt.Errorf("join: channel worker %s is closed", w.name))
 							return
 						}
 						postman.Send(ctx, v)
@@ -201,32 +201,18 @@ type Flow struct {
 	errHndFunc ErrHndFunc
 }
 
-// FlowOpt is Flow option
-type FlowOpt func(*Flow)
-
-// ErrHndFuncOptFlow is a error handler flow option
-func ErrHndFuncOptFlow(errHndFunc ErrHndFunc) FlowOpt {
-	return func(f *Flow) {
-		f.errHndFunc = errHndFunc
-	}
-}
-
 // NewFlow is a constructor
-func NewFlow(ctx context.Context, opts ...FlowOpt) Flow {
+func NewFlow(ctx context.Context) Flow {
 	ctx, cf := context.WithCancel(ctx)
-	f := Flow{
+	return Flow{
 		workers:      make(map[uuid.UUID]Worker),
 		cf:           cf,
 		ctx:          ctx,
 		startChan:    make(chan struct{}),
 		finishedChan: make(chan struct{}),
-	}
 
-	for _, opt := range opts {
-		opt(&f)
+		errHndFunc: func(error) {},
 	}
-
-	return f
 }
 
 // AddWorker is self described
@@ -246,10 +232,6 @@ func (f Flow) WakeUpWorkers() {
 func (f Flow) Run() {
 	f.WakeUpWorkers()
 	go func() {
-		defer func() {
-			fmt.Println("finish flow loop")
-		}()
-		fmt.Println("start flow loop")
 		for {
 			select {
 			case <-f.ctx.Done():
