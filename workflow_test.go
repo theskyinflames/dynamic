@@ -11,9 +11,11 @@ import (
 	main "github.com/theskyinflames/dynamic-go"
 )
 
-var errHndFunc = func(err error) {
-	fmt.Printf("ERR: %s", err.Error())
-}
+var (
+	errHndFunc = func(err error) {
+		fmt.Printf("ERR: %s\n", err.Error())
+	}
+)
 
 // * --> JOB1() --> JOB2() --> x --> (output consumer)
 func TestLinearFlow(t *testing.T) {
@@ -46,7 +48,11 @@ func TestLinearFlow(t *testing.T) {
 			}
 		}
 		w1In := make(chan main.Param)
-		w1 := main.NewWorker(job1, w1In, main.NameOpt("w1"), main.ErrHndFuncOpt(errHndFunc))
+		w1 := main.NewWorker(
+			job1,
+			w1In, main.NameOpt("w1"),
+			main.ErrHndFuncWorkerOpt(errHndFunc),
+		)
 
 		job2 := func(ctx context.Context, postman main.Postman) {
 			for {
@@ -69,7 +75,12 @@ func TestLinearFlow(t *testing.T) {
 				}
 			}
 		}
-		w2 := main.NewWorker(job2, main.JobIn(w1.Out()), main.NameOpt("w2"), main.ErrHndFuncOpt(errHndFunc))
+		w2 := main.NewWorker(
+			job2,
+			main.JobIn(w1.Out()),
+			main.NameOpt("w2"),
+			main.ErrHndFuncWorkerOpt(errHndFunc),
+		)
 
 		// Create the workflow and add the workers
 		ctx, cancelFunc := context.WithCancel(context.Background())
@@ -158,7 +169,12 @@ func TestJoin(t *testing.T) {
 			}
 		}
 		w1In := make(chan main.Param)
-		w1 := main.NewWorker(job1, w1In, main.NameOpt("w1"), main.ErrHndFuncOpt(errHndFunc))
+		w1 := main.NewWorker(
+			job1,
+			w1In,
+			main.NameOpt("w1"),
+			main.ErrHndFuncWorkerOpt(errHndFunc),
+		)
 
 		job2 := func(ctx context.Context, postman main.Postman) {
 			for {
@@ -182,10 +198,19 @@ func TestJoin(t *testing.T) {
 			}
 		}
 		w2In := make(chan main.Param)
-		w2 := main.NewWorker(job2, w2In, main.NameOpt("w2"), main.ErrHndFuncOpt(errHndFunc))
+		w2 := main.NewWorker(
+			job2,
+			w2In,
+			main.NameOpt("w2"),
+			main.ErrHndFuncWorkerOpt(errHndFunc),
+		)
 
 		// This an special worker that acts like a join in the workflow
-		join1 := main.NewJoinWorker([]main.Worker{w1, w2}, main.NameOpt("join1"), main.ErrHndFuncOpt(errHndFunc))
+		join1 := main.NewJoinWorker(
+			[]main.Worker{w1, w2},
+			main.NameOpt("join1"),
+			main.ErrHndFuncWorkerOpt(errHndFunc),
+		)
 
 		job3 := func(ctx context.Context, postman main.Postman) {
 			max := float64(math.MinInt64)
@@ -217,7 +242,12 @@ func TestJoin(t *testing.T) {
 				}
 			}
 		}
-		w3 := main.NewWorker(job3, main.JobIn(join1.Out()), main.NameOpt("w3"), main.ErrHndFuncOpt(errHndFunc))
+		w3 := main.NewWorker(
+			job3,
+			main.JobIn(join1.Out()),
+			main.NameOpt("w3"),
+			main.ErrHndFuncWorkerOpt(errHndFunc),
+		)
 
 		// create the flow
 		ctx, cancelFunc := context.WithCancel(context.Background())
