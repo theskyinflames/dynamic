@@ -59,7 +59,7 @@ func NameOpt(name string) WorkerOpt {
 func NewWorker(job Job, in JobIn, opts ...WorkerOpt) Worker {
 	w := Worker{
 		uuid: uuid.NewV4(),
-		out:  make(chan Param),
+		out:  make(chan Param, 1),
 		job:  job,
 		in:   in,
 	}
@@ -81,22 +81,17 @@ func (w Worker) Out() JobOut {
 	return w.out
 }
 
-func (w *Worker) setInChan(in JobIn) {
-	w.in = in
-}
-
 // Receive is self described
 func (w Worker) Receive(ctx context.Context) (*Param, error) {
 	var (
 		p   *Param
 		err error
 	)
-	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(time.Second))
+	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(10*time.Millisecond))
 	defer cancelFunc()
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		fmt.Printf("postman %s to receive, from w.in: %#v\n", w.name, w.in)
 		defer wg.Done()
 		for {
 			select {
@@ -109,8 +104,7 @@ func (w Worker) Receive(ctx context.Context) (*Param, error) {
 						err = fmt.Errorf("try to read from a closed in chan (%s,%s)", w.name, w.uuid.String())
 						return
 					}
-					p := &received
-					fmt.Printf("postman %s received %#v from %#v\n", "w1", *p, w.in)
+					p = &received
 					return
 				}
 			}
@@ -123,12 +117,12 @@ func (w Worker) Receive(ctx context.Context) (*Param, error) {
 // Send is self described
 func (w Worker) Send(ctx context.Context, p Param) bool {
 	var sent bool
-	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(time.Second))
+	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(10*time.Millisecond))
 	defer cancelFunc()
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		fmt.Printf("worker %s to send %#v\n", w.name, p.Value)
+		fmt.Printf(">>>> worker %s to send %#v\n", w.name, p.Value)
 		defer wg.Done()
 		for {
 			select {
@@ -138,7 +132,7 @@ func (w Worker) Send(ctx context.Context, p Param) bool {
 				if len(w.out) == 0 {
 					w.out <- p
 					sent = true
-					fmt.Printf("worker %s sent %#v\n", w.name, p.Value)
+					fmt.Printf(">>>++ worker %s sent %#v\n", w.name, p.Value)
 					return
 				}
 			}
@@ -220,7 +214,8 @@ func NewFlow(ctx context.Context) Flow {
 }
 
 // AddWorker is self described
-func (f Flow) AddWorker(w Worker, in <-chan Param) {
+func (f Flow) AddWorker(w Worker) {
+	fmt.Printf("Adding worker %s\n (%s) with in %#v\n", w.uuid.String(), w.name, w.in)
 	f.workers[w.uuid] = w
 }
 
