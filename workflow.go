@@ -112,6 +112,7 @@ func (w Worker) Receive(ctx context.Context) (*Param, error) {
 			case received, ok := <-w.in:
 				if !ok {
 					err = fmt.Errorf("try to read from a closed in chan (%s,%s)", w.name, w.uuid.String())
+					w.errHndFunc(err)
 					return
 				}
 				p = &received
@@ -158,7 +159,6 @@ func (w Worker) wakeUp(ctx context.Context, s Sync) {
 				break ends
 			case <-s:
 				w.job(ctx, &w)
-				break ends
 			}
 		}
 	}()
@@ -230,15 +230,10 @@ func (f Flow) WakeUpWorkers() {
 // Run is self described
 func (f Flow) Run() {
 	f.WakeUpWorkers()
-	go func() {
-		<-f.ctx.Done()
-		close(f.finishedChan)
-	}()
 	close(f.startChan)
 }
 
 // Kill ends the flow
 func (f Flow) Kill() {
 	f.cf()
-	<-f.finishedChan
 }

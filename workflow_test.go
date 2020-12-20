@@ -27,22 +27,15 @@ func TestLinearFlow(t *testing.T) {
 
 		// Create the workflow workers
 		job1 := func(ctx context.Context, postman main.Postman) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					v, err := postman.Receive(ctx)
-					if err != nil {
-						fmt.Println(err.Error())
-						return
-					}
-					if v != nil {
-						for {
-							if postman.Send(ctx, *v) {
-								break
-							}
-						}
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				for {
+					if postman.Send(ctx, *v) {
+						break
 					}
 				}
 			}
@@ -55,22 +48,15 @@ func TestLinearFlow(t *testing.T) {
 		)
 
 		job2 := func(ctx context.Context, postman main.Postman) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					v, err := postman.Receive(ctx)
-					if err != nil {
-						fmt.Println(err.Error())
-						return
-					}
-					if v != nil {
-						for {
-							if postman.Send(ctx, *v) {
-								break
-							}
-						}
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				for {
+					if postman.Send(ctx, *v) {
+						break
 					}
 				}
 			}
@@ -148,22 +134,15 @@ func TestJoin(t *testing.T) {
 
 		// Create workers
 		job1 := func(ctx context.Context, postman main.Postman) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					v, err := postman.Receive(ctx)
-					if err != nil {
-						fmt.Println(err.Error())
-						return
-					}
-					if v != nil {
-						for {
-							if postman.Send(ctx, *v) {
-								break
-							}
-						}
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				for {
+					if postman.Send(ctx, *v) {
+						break
 					}
 				}
 			}
@@ -177,22 +156,15 @@ func TestJoin(t *testing.T) {
 		)
 
 		job2 := func(ctx context.Context, postman main.Postman) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					v, err := postman.Receive(ctx)
-					if err != nil {
-						fmt.Println(err.Error())
-						return
-					}
-					if v != nil {
-						for {
-							if postman.Send(ctx, *v) {
-								break
-							}
-						}
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				for {
+					if postman.Send(ctx, *v) {
+						break
 					}
 				}
 			}
@@ -212,32 +184,25 @@ func TestJoin(t *testing.T) {
 			main.ErrHndFuncWorkerOpt(errHndFunc),
 		)
 
+		var job3Max = float64(math.MinInt64)
 		job3 := func(ctx context.Context, postman main.Postman) {
-			max := float64(math.MinInt64)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					v, err := postman.Receive(ctx)
-					if err != nil {
-						fmt.Println(err.Error())
-						return
-					}
-					if v != nil {
-						if v.Value == nil {
-							fmt.Println("w3 received value nil")
-						}
-						n := v.Value.(float64)
-						if n > max {
-							max = n
-						}
-						p := main.Param{Value: max}
-						for {
-							if postman.Send(ctx, p) {
-								break
-							}
-						}
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				if v.Value == nil {
+					fmt.Println("w3 received value nil")
+				}
+				n := v.Value.(float64)
+				if n > job3Max {
+					job3Max = n
+				}
+				p := main.Param{Value: job3Max}
+				for {
+					if postman.Send(ctx, p) {
+						break
 					}
 				}
 			}
