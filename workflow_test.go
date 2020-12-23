@@ -3,6 +3,7 @@ package main_test
 import (
 	"fmt"
 	"math"
+	"sync"
 	"testing"
 
 	"context"
@@ -33,20 +34,21 @@ func TestLinearFlow(t *testing.T) {
 				return
 			}
 			if v != nil {
-				for {
-					if postman.Send(ctx, *v) {
-						break
-					}
+				for !postman.Send(ctx, *v) {
 				}
 			}
 		}
 		w1In := make(chan main.Param)
 		w1 := main.NewWorker(
+			nil,
 			job1,
-			w1In, main.NameOpt("w1"),
-			main.ErrHndFuncWorkerOpt(errHndFunc),
+			main.NameWOpt("w1"),
+			main.AddOrphanInWOpt(w1In),
+			main.ErrHndFuncWOpt(errHndFunc),
+			main.AddInfoFuncWOpt(main.Infof),
 		)
 
+		outGraphChan := make(chan main.Param)
 		job2 := func(ctx context.Context, postman main.Postman) {
 			v, err := postman.Receive(ctx)
 			if err != nil {
@@ -54,23 +56,20 @@ func TestLinearFlow(t *testing.T) {
 				return
 			}
 			if v != nil {
-				for {
-					if postman.Send(ctx, *v) {
-						break
-					}
-				}
+				outGraphChan <- *v
 			}
 		}
 		w2 := main.NewWorker(
+			[]*main.Worker{&w1},
 			job2,
-			main.JobIn(w1.Out()),
-			main.NameOpt("w2"),
-			main.ErrHndFuncWorkerOpt(errHndFunc),
+			main.NameWOpt("w2"),
+			main.ErrHndFuncWOpt(errHndFunc),
+			main.AddInfoFuncWOpt(main.Infof),
 		)
 
 		// Create the workflow and add the workers
 		ctx, cancelFunc := context.WithCancel(context.Background())
-		flow := main.NewFlow(ctx)
+		flow := main.NewFlow(ctx, main.AddInfoFuncFOpt(main.Infof))
 		flow.AddWorker(w1)
 		flow.AddWorker(w2)
 
@@ -97,7 +96,10 @@ func TestLinearFlow(t *testing.T) {
 				select {
 				case <-ctx.Done():
 					return
-				case p := <-w2.Out():
+				case p, ok := <-outGraphChan:
+					if !ok {
+						return
+					}
 					receivedValues = append(receivedValues, p)
 					if len(receivedValues) == len(values) {
 						close(allValuesReceivedChan)
@@ -125,11 +127,11 @@ func TestLinearFlow(t *testing.T) {
 // * --> JOB1() -->	|
 //             		| --> JOB3() --> x --> (output consumer)
 // * --> JOB2() -->	|
-func TestJoin(t *testing.T) {
+func TestFlowWithJoin(t *testing.T) {
 	require := require.New(t)
 
 	t.Run(`Given two parallel jobs that joins to a third job,
-	when the workflow runs, 
+	when the workflow runs,
 	then the workflow outputs the result of the third job`, func(t *testing.T) {
 
 		// Create workers
@@ -140,19 +142,18 @@ func TestJoin(t *testing.T) {
 				return
 			}
 			if v != nil {
-				for {
-					if postman.Send(ctx, *v) {
-						break
-					}
+				for !postman.Send(ctx, *v) {
 				}
 			}
 		}
 		w1In := make(chan main.Param)
 		w1 := main.NewWorker(
+			nil,
 			job1,
-			w1In,
-			main.NameOpt("w1"),
-			main.ErrHndFuncWorkerOpt(errHndFunc),
+			main.NameWOpt("w1"),
+			main.AddOrphanInWOpt(w1In),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
 		)
 
 		job2 := func(ctx context.Context, postman main.Postman) {
@@ -162,29 +163,22 @@ func TestJoin(t *testing.T) {
 				return
 			}
 			if v != nil {
-				for {
-					if postman.Send(ctx, *v) {
-						break
-					}
+				for !postman.Send(ctx, *v) {
 				}
 			}
 		}
 		w2In := make(chan main.Param)
 		w2 := main.NewWorker(
+			nil,
 			job2,
-			w2In,
-			main.NameOpt("w2"),
-			main.ErrHndFuncWorkerOpt(errHndFunc),
+			main.NameWOpt("w2"),
+			main.AddOrphanInWOpt(w2In),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
 		)
 
-		// This an special worker that acts like a join in the workflow
-		join1 := main.NewJoinWorker(
-			[]main.Worker{w1, w2},
-			main.NameOpt("join1"),
-			main.ErrHndFuncWorkerOpt(errHndFunc),
-		)
-
-		var job3Max = float64(math.MinInt64)
+		var job3Max = math.MinInt64
+		outJob3 := make(main.JobOut)
 		job3 := func(ctx context.Context, postman main.Postman) {
 			v, err := postman.Receive(ctx)
 			if err != nil {
@@ -195,33 +189,28 @@ func TestJoin(t *testing.T) {
 				if v.Value == nil {
 					fmt.Println("w3 received value nil")
 				}
-				n := v.Value.(float64)
+				n := v.Value.(int)
 				if n > job3Max {
 					job3Max = n
 				}
-				p := main.Param{Value: job3Max}
-				for {
-					if postman.Send(ctx, p) {
-						break
-					}
-				}
+				outJob3 <- main.Param{Value: job3Max}
 			}
 		}
 		w3 := main.NewWorker(
+			[]*main.Worker{&w1, &w2},
 			job3,
-			main.JobIn(join1.Out()),
-			main.NameOpt("w3"),
-			main.ErrHndFuncWorkerOpt(errHndFunc),
+			main.NameWOpt("w3"),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
 		)
 
 		// create the flow
 		ctx, cancelFunc := context.WithCancel(context.Background())
-		flow := main.NewFlow(ctx)
+		flow := main.NewFlow(ctx, main.AddInfoFuncFOpt(main.Infof))
 
 		// Add workers to the workflow
 		flow.AddWorker(w1)
 		flow.AddWorker(w2)
-		flow.AddWorker(join1)
 		flow.AddWorker(w3)
 
 		// Start the workflow
@@ -229,18 +218,18 @@ func TestJoin(t *testing.T) {
 
 		// Fixtures to feed the workflow
 		values := []main.Param{
-			{Value: float64(10)},
-			{Value: float64(32)},
-			{Value: math.MaxFloat64},
-			{Value: float64(999999)},
-			{Value: float64(-45)},
-			{Value: float64(100)},
+			{Value: 10},
+			{Value: 32},
+			{Value: math.MaxInt64},
+			{Value: 999999},
+			{Value: -45},
+			{Value: 100},
 		}
 
 		// Start the workflow output consumer
 		var (
 			p                     main.Param
-			max                   float64
+			max                   int
 			ok                    bool
 			i                     = 0
 			allValuesReceivedChan = make(chan struct{})
@@ -250,11 +239,11 @@ func TestJoin(t *testing.T) {
 				select {
 				case <-ctx.Done():
 					return
-				case p, ok = <-w3.Out():
+				case p, ok = <-outJob3:
 					if !ok {
 						return
 					}
-					max = p.Value.(float64)
+					max = p.Value.(int)
 					i++
 					if i == len(values) {
 						// force the end of the workflow
@@ -280,6 +269,232 @@ func TestJoin(t *testing.T) {
 		cancelFunc()
 		flow.Kill()
 
-		require.Equal(math.MaxFloat64, max)
+		require.Equal(math.MaxInt64, max)
 	})
+}
+
+// * --> JOB1() -->	|
+//             		 >--> JOB3() --> x --> (output consumer)
+// * --> JOB2() -->	|
+//             |
+//             ---------> JOB4() --> x --> (output consumer2)
+func TestFlowWithJoinAndSplit(t *testing.T) {
+	require := require.New(t)
+
+	// TODO remove this tracing from workfow package
+	go func() {
+		for s := range main.TracingChan {
+			fmt.Println(s)
+		}
+	}()
+
+	t.Run(`Given two parallel jobs that joins to a third job,
+	when the workflow runs,
+	then the workflow outputs the result of the third job`, func(t *testing.T) {
+
+		// Create workers
+		job1 := func(ctx context.Context, postman main.Postman) {
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				for !postman.Send(ctx, *v) {
+					//main.Infof("retry send job1 %#v", v.Value)
+				}
+			}
+		}
+		w1In := make(chan main.Param)
+		w1 := main.NewWorker(
+			nil,
+			job1,
+			main.NameWOpt("w1"),
+			main.AddOrphanInWOpt(w1In),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
+		)
+
+		job2 := func(ctx context.Context, postman main.Postman) {
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				main.Infof("job2 to send %#v", v.Value)
+				for !postman.Send(ctx, *v) {
+					//main.Infof("retry send job2 %#v", v.Value)
+				}
+			}
+		}
+		w2In := make(chan main.Param)
+		w2 := main.NewWorker(
+			nil,
+			job2,
+			main.NameWOpt("w2"),
+			main.AddOrphanInWOpt(w2In),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
+		)
+
+		var job3Max = math.MinInt64
+		outJob3 := make(main.JobOut)
+		job3 := func(ctx context.Context, postman main.Postman) {
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				n := v.Value.(int)
+				main.Infof("job3 received %d", n)
+				if n > job3Max {
+					job3Max = n
+				}
+				outJob3 <- main.Param{Value: job3Max}
+			}
+		}
+		w3 := main.NewWorker(
+			[]*main.Worker{&w1, &w2},
+			job3,
+			main.NameWOpt("w3"),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
+		)
+
+		var job4Min = math.MaxInt64
+		outJob4 := make(main.JobOut)
+		job4 := func(ctx context.Context, postman main.Postman) {
+			v, err := postman.Receive(ctx)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+			if v != nil {
+				n := v.Value.(int)
+				main.Infof("job4 received %d", n)
+				if n < job4Min {
+					job4Min = n
+				}
+				outJob4 <- main.Param{Value: job4Min}
+			}
+		}
+		w4 := main.NewWorker(
+			[]*main.Worker{&w2},
+			job4,
+			main.NameWOpt("w4"),
+			main.AddInfoFuncWOpt(main.Infof),
+			main.ErrHndFuncWOpt(errHndFunc),
+		)
+
+		// create the flow
+		ctx, cancelFunc := context.WithCancel(context.Background())
+		flow := main.NewFlow(ctx, main.AddInfoFuncFOpt(main.Infof))
+
+		// Add workers to the workflow
+		flow.AddWorker(w1)
+		flow.AddWorker(w2)
+		flow.AddWorker(w3)
+		flow.AddWorker(w4)
+
+		// Start the workflow
+		flow.Run()
+
+		// Fixtures to feed the workflow
+		values := []main.Param{
+			{Value: 10},
+			{Value: 32},
+			{Value: math.MaxInt64},
+			{Value: math.MinInt64},
+			{Value: 999999},
+			{Value: -45},
+			{Value: 100},
+		}
+
+		// Start the workflow output MAX consumer
+		var (
+			i   int
+			max int
+			wg  = sync.WaitGroup{}
+		)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				// finishing the consumer when all values have been received
+				// this step is only necessary if we do know when finish the flow
+				if i == len(values) {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case p, ok := <-outJob3:
+					if !ok {
+						return
+					}
+					max = p.Value.(int)
+					i++
+				}
+			}
+		}()
+
+		// Start the workflow output consumer
+		var (
+			min  int
+			odds = countOdds(len(values))
+			i2   = 0
+		)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				// finishing the consumer when all values have been received
+				// this step is only necessary if we do know when finish the flow
+				if i2 == odds {
+					// all odd values positions have been readed
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case p, ok := <-outJob4:
+					if !ok {
+						return
+					}
+					min = p.Value.(int)
+					i2++
+				}
+			}
+		}()
+
+		// Feed the workflow
+		for i := range values {
+			if i%2 == 0 {
+				w1In <- values[i]
+			} else {
+				w2In <- values[i]
+			}
+		}
+
+		// Wait for all fixture data has been read
+		wg.Wait()
+
+		// Finish the workflow
+		cancelFunc()
+		flow.Kill()
+
+		require.Equal(math.MaxInt64, max)
+		require.Equal(math.MinInt64, min)
+	})
+}
+
+func countOdds(n int) int {
+	odds := int(n / 2)
+	// if either n is odd
+	if n%2 == 0 {
+		odds++
+	}
+	return odds
 }
