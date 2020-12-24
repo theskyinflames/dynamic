@@ -1,32 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
 	"sync"
 	"sync/atomic"
 
 	uuid "github.com/satori/go.uuid"
-)
-
-// InfoFunc is a tracing function
-type InfoFunc func(format string, args ...interface{})
-
-var (
-	buf    bytes.Buffer
-	logger = log.New(os.Stdout, "INFO: ", log.Lshortfile)
-
-	// TracingChan is a tracing chan
-	TracingChan = make(chan string)
-
-	// Infof is a basic logging function for debug purposes
-	Infof = func(format string, args ...interface{}) {
-		TracingChan <- fmt.Sprintf(format, args...)
-	}
 )
 
 // Param is a worker in/out param
@@ -35,9 +16,6 @@ type Param struct {
 	Name  string
 	Value interface{}
 }
-
-// Sync is a sync flag
-type Sync <-chan struct{}
 
 // JobIn is self described
 type JobIn chan Param
@@ -57,14 +35,18 @@ type Job func(context.Context, Postman)
 // ErrHndFunc is an error handler
 type ErrHndFunc func(error)
 
+// InFilterFunc is a worker output filter
+type InFilterFunc func(Param) bool
+
 // Worker execute jobs
 type Worker struct {
-	uuid       uuid.UUID
-	name       string
-	out        []JobOut
-	in         []JobIn
-	squashedIn JobIn
-	job        Job
+	uuid         uuid.UUID
+	name         string
+	inFilterFunc InFilterFunc
+	out          []JobOut
+	in           []JobIn
+	squashedIn   JobIn
+	job          Job
 
 	errHndFunc ErrHndFunc
 	infoFunc   InfoFunc
@@ -101,14 +83,21 @@ func AddInfoFuncWOpt(infoFunc InfoFunc) WorkerOpt {
 	}
 }
 
+// AddInFilterFuncWOpt is a an option
+func AddInFilterFuncWOpt(inFilterFunc InFilterFunc) WorkerOpt {
+	return func(w *Worker) {
+		w.inFilterFunc = inFilterFunc
+	}
+}
+
 // NewWorker is a constructor
 func NewWorker(parents []*Worker, job Job, opts ...WorkerOpt) Worker {
-
 	w := Worker{
-		uuid:       uuid.NewV4(),
-		job:        job,
-		errHndFunc: func(error) {},
-		infoFunc:   func(string, ...interface{}) {},
+		uuid:         uuid.NewV4(),
+		job:          job,
+		inFilterFunc: func(Param) bool { return true },
+		errHndFunc:   func(error) {},
+		infoFunc:     func(string, ...interface{}) {},
 	}
 	w.in = make([]JobIn, len(parents))
 	for _, p := range parents {
@@ -172,6 +161,8 @@ func (w *Worker) receivingLoop(ctx context.Context) {
 	}
 }
 
+var ErrFlowKilled = errors.New("reading aborted, flow killed")
+
 // Receive is self described
 func (w Worker) Receive(ctx context.Context) (*Param, error) {
 	if len(w.in) == 0 {
@@ -184,9 +175,11 @@ func (w Worker) Receive(ctx context.Context) (*Param, error) {
 	)
 	select {
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ErrFlowKilled
 	case received, ok = <-w.squashedIn:
-		//nothing to do here
+		if !w.inFilterFunc(received) {
+			return nil, nil
+		}
 	}
 	if !ok {
 		err := fmt.Errorf("try to read from a closed in chan (%s,%s)", w.name, w.uuid.String())
