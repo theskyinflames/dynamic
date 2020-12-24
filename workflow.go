@@ -208,10 +208,8 @@ func (w Worker) Send(ctx context.Context, p Param) bool {
 			case <-ctx.Done():
 				return
 			default:
-				w.infoFunc("Send %s to send %#v", w.name, p.Value)
 				out <- p
 				atomic.AddInt64(&sent, 1)
-				w.infoFunc("Send %s sent %#v", w.name, p.Value)
 				return
 			}
 		}(out)

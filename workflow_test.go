@@ -301,7 +301,7 @@ func TestFlowWithJoinAndSplit(t *testing.T) {
 			}
 			if v != nil {
 				for !postman.Send(ctx, *v) {
-					//main.Infof("retry send job1 %#v", v.Value)
+					// retry sending
 				}
 			}
 		}
@@ -322,9 +322,8 @@ func TestFlowWithJoinAndSplit(t *testing.T) {
 				return
 			}
 			if v != nil {
-				main.Infof("job2 to send %#v", v.Value)
 				for !postman.Send(ctx, *v) {
-					//main.Infof("retry send job2 %#v", v.Value)
+					// retry sending
 				}
 			}
 		}
@@ -348,7 +347,6 @@ func TestFlowWithJoinAndSplit(t *testing.T) {
 			}
 			if v != nil {
 				n := v.Value.(int)
-				main.Infof("job3 received %d", n)
 				if n > job3Max {
 					job3Max = n
 				}
@@ -373,7 +371,6 @@ func TestFlowWithJoinAndSplit(t *testing.T) {
 			}
 			if v != nil {
 				n := v.Value.(int)
-				main.Infof("job4 received %d", n)
 				if n < job4Min {
 					job4Min = n
 				}
@@ -454,6 +451,7 @@ func TestFlowWithJoinAndSplit(t *testing.T) {
 				// this step is only necessary if we do know when finish the flow
 				if i2 == odds {
 					// all odd values positions have been readed
+					// take account that this job only receives odd values
 					return
 				}
 				select {
