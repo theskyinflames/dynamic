@@ -161,6 +161,7 @@ func (w *Worker) receivingLoop(ctx context.Context) {
 	}
 }
 
+// ErrFlowKilled is fired when the flow is killed
 var ErrFlowKilled = errors.New("reading aborted, flow killed")
 
 // Receive is self described
@@ -175,6 +176,7 @@ func (w Worker) Receive(ctx context.Context) (*Param, error) {
 	)
 	select {
 	case <-ctx.Done():
+		// Avoiding blockint read operations hangs the flow
 		return nil, ErrFlowKilled
 	case received, ok = <-w.squashedIn:
 		if !w.inFilterFunc(received) {

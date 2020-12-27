@@ -14,7 +14,6 @@ var (
 
 	// Infof is a basic logging function for debug purposes
 	Infof = func(format string, args ...interface{}) {
-		//tracingChan <- fmt.Sprintf(format, args...)
 		logger.Output(2, fmt.Sprintf(format, args...))
 	}
 )
