@@ -1,4 +1,4 @@
-package main
+package dynamic
 
 import (
 	"context"
@@ -96,12 +96,12 @@ func NewWorker(parents []*Worker, job Job, opts ...WorkerOpt) Worker {
 		uuid:         uuid.NewV4(),
 		job:          job,
 		inFilterFunc: func(Param) bool { return true },
-		errHndFunc:   func(error) {},
+		errHndFunc:   Errorf,
 		infoFunc:     func(string, ...interface{}) {},
 	}
 	w.in = make([]JobIn, len(parents))
 	for _, p := range parents {
-		w.in = append(w.in, JobIn(p.plugin(w)))
+		w.in = append(w.in, JobIn(p.plugin()))
 	}
 	for _, opt := range opts {
 		opt(&w)
@@ -114,7 +114,7 @@ func (w Worker) Name() string {
 	return w.name
 }
 
-func (w *Worker) plugin(child Worker) JobOut {
+func (w *Worker) plugin() JobOut {
 	childOut := make(JobOut)
 	w.out = append(w.out, childOut)
 	return childOut
@@ -213,16 +213,11 @@ func (w Worker) Send(ctx context.Context, p Param) bool {
 	return int(sent) == len(w.out)
 }
 
-var defaultErrHndFunc = func(err error) {
-	fmt.Printf("ERR: %s", err.Error())
-}
-
 // Flow is a graph of workers
 type Flow struct {
 	workers      map[uuid.UUID]*Worker
 	cf           context.CancelFunc
 	ctx          context.Context
-	startChan    chan struct{}
 	finishedChan chan struct{}
 
 	errHndFunc ErrHndFunc

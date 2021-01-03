@@ -1,4 +1,4 @@
-module github.com/theskyinflames/dynamic-go
+module github.com/theskyinflames/dynamic
 
 go 1.14
 

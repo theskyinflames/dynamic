@@ -1,254 +1,31 @@
-package main_test
+package dynamic_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"math"
-	"sync"
 	"testing"
 
-	"context"
-
 	"github.com/stretchr/testify/require"
-	main "github.com/theskyinflames/dynamic-go"
+	main "github.com/theskyinflames/dynamic"
 )
 
-var (
-	errHndFunc = func(err error) {
-		fmt.Printf("ERR: %s\n", err.Error())
-	}
-)
-
-// * --> JOB1() -->	|
-//             		|--> JOB3() --> x --> (output consumer)
-// * --> JOB2() -->	|
-//             |
-//             ---------> JOB4() --> x --> (output consumer2)
-func TestFlowWithJoinAndSplit(t *testing.T) {
-	require := require.New(t)
-
-	t.Run(`Given two parallel jobs that joins to a third job,
-	when the workflow runs,
-	then the workflow outputs the result of the third job`, func(t *testing.T) {
-
-		// Create workers
-		job1 := func(ctx context.Context, postman main.Postman) {
-			v, err := postman.Receive(ctx)
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-			if v != nil {
-				for !postman.Send(ctx, *v) {
-					// retry sending
-				}
-			}
-		}
-		w1In := make(chan main.Param)
-		w1 := main.NewWorker(
-			nil,
-			job1,
-			main.NameWOpt("w1"),
-			main.AddOrphanInWOpt(w1In),
-			main.AddInfoFuncWOpt(main.Infof),
-			main.ErrHndFuncWOpt(errHndFunc),
-		)
-
-		job2 := func(ctx context.Context, postman main.Postman) {
-			v, err := postman.Receive(ctx)
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-			if v != nil {
-				for !postman.Send(ctx, *v) {
-					// retry sending
-				}
-			}
-		}
-		w2In := make(chan main.Param)
-		w2 := main.NewWorker(
-			nil,
-			job2,
-			main.NameWOpt("w2"),
-			main.AddOrphanInWOpt(w2In),
-			main.AddInfoFuncWOpt(main.Infof),
-			main.ErrHndFuncWOpt(errHndFunc),
-		)
-
-		var job3Max = math.MinInt64
-		outJob3 := make(main.JobOut)
-		job3 := func(ctx context.Context, postman main.Postman) {
-			v, err := postman.Receive(ctx)
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-			if v != nil {
-				n := v.Value.(int)
-				if n > job3Max {
-					job3Max = n
-				}
-				outJob3 <- main.Param{Value: job3Max}
-			}
-		}
-		w3 := main.NewWorker(
-			[]*main.Worker{&w1, &w2},
-			job3,
-			main.NameWOpt("w3"),
-			main.AddInfoFuncWOpt(main.Infof),
-			main.ErrHndFuncWOpt(errHndFunc),
-		)
-
-		var job4Min = math.MaxInt64
-		outJob4 := make(main.JobOut)
-		job4 := func(ctx context.Context, postman main.Postman) {
-			v, err := postman.Receive(ctx)
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-			if v != nil {
-				n := v.Value.(int)
-				if n < job4Min {
-					job4Min = n
-				}
-				outJob4 <- main.Param{Value: job4Min}
-			}
-		}
-		w4 := main.NewWorker(
-			[]*main.Worker{&w2},
-			job4,
-			main.NameWOpt("w4"),
-			main.AddInfoFuncWOpt(main.Infof),
-			main.ErrHndFuncWOpt(errHndFunc),
-		)
-
-		// create the flow
-		ctx, cancelFunc := context.WithCancel(context.Background())
-		flow := main.NewFlow(ctx, main.AddInfoFuncFOpt(main.Infof))
-
-		// Add workers to the workflow
-		flow.AddWorker(w1)
-		flow.AddWorker(w2)
-		flow.AddWorker(w3)
-		flow.AddWorker(w4)
-
-		// Start the workflow
-		flow.Run()
-
-		// Fixtures to feed the workflow
-		values := []main.Param{
-			{Value: 10},
-			{Value: 32},
-			{Value: math.MaxInt64},
-			{Value: math.MinInt64},
-			{Value: 999999},
-			{Value: -45},
-			{Value: 100},
-		}
-
-		// Start the workflow output MAX consumer
-		var (
-			i   int
-			max int
-			wg  = sync.WaitGroup{}
-		)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				// finishing the consumer when all values have been received
-				// this step is only necessary if we do know when finish the flow
-				if i == len(values) {
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case p, ok := <-outJob3:
-					if !ok {
-						return
-					}
-					max = p.Value.(int)
-					i++
-				}
-			}
-		}()
-
-		// Start the workflow output consumer
-		var (
-			min  int
-			odds = countOdds(len(values))
-			i2   = 0
-		)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				// finishing the consumer when all values have been received
-				// this step is only necessary if we do know when finish the flow
-				if i2 == odds {
-					// all odd values positions have been readed
-					// take account that this job only receives odd values
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case p, ok := <-outJob4:
-					if !ok {
-						return
-					}
-					min = p.Value.(int)
-					i2++
-				}
-			}
-		}()
-
-		// Feed the workflow
-		for i := range values {
-			if i%2 == 0 {
-				w1In <- values[i]
-			} else {
-				w2In <- values[i]
-			}
-		}
-
-		// Wait for all fixture data has been read
-		wg.Wait()
-
-		// Finish the workflow
-		cancelFunc()
-		flow.Kill()
-
-		require.Equal(math.MaxInt64, max)
-		require.Equal(math.MinInt64, min)
-	})
-}
-
-func countOdds(n int) int {
-	odds := int(n / 2)
-	// if either n is odd
-	if n%2 == 0 {
-		odds++
-	}
-	return odds
+var errHndFunc = func(err error) {
+	fmt.Printf("ERR: %s\n", err.Error())
 }
 
 // In this example, JOB1 takes a list of numbers and send them to JOB1 and JOB2.
 // But, with a constraint. JOB2 only accumulates odd numbers, and JOB3 only even ones.
 // These two jobs add all receiving numbers and output their totals every time they
-// receive a new number and hence, their total changes.
-// The JOB4 receives the totals from JOB2 and JOB3, adds them and says if the
-// addition is equal to addition of all numbers of the list.
-// The flow ends when JOB4 receives all numbers of the list.
+// receive a new number and hence, their local total changes.
+// The JOB4 receives the totals from JOB2 and JOB3, adds them and checks if the
+// addition is equal to addition of all numbers of the list. If so, the flow finishes.
 //
 //               --- odd  --> JOB2() --|
 // * --> JOB1() -|                     |--> JOB4() --> (output consumer)
 //               --- even --> JOB3() --|
 //
-func TestJobInputFilter(t *testing.T) {
+func TestFlow(t *testing.T) {
 	require := require.New(t)
 
 	job1 := func(ctx context.Context, postman main.Postman) {
