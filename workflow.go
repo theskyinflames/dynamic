@@ -70,6 +70,7 @@ func ErrHndFuncWOpt(errHndFunc ErrHndFunc) WorkerOpt {
 }
 
 // AddOrphanInWOpt is an option
+// This option adds an external <-chan to feed the job
 func AddOrphanInWOpt(in JobIn) WorkerOpt {
 	return func(w *Worker) {
 		w.in = append(w.in, in)
