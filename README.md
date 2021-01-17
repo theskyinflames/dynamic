@@ -1,7 +1,7 @@
 <img src="./dynamic-logo.png"
      alt="dynamic logo"
      style="padding:10px; margin: 10px;background:white" />
-# dynamic lib
+# dynamic
 This is a kind of workflows library inspired by:
 * [flow-based programming paradigm](https://en.wikipedia.org/wiki/Flow-based_programming)
 * [railway programming pattern](https://naveenkumarmuguda.medium.com/railway-oriented-programming-a-powerful-functional-programming-pattern-ab454e467f31)
