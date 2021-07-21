@@ -55,7 +55,7 @@ These are the steps to flow to build a flow:
 
 See [Sorting flow example](./examples/sorting/README.md) and [tests](./workflow_test.go) to figure out how to code your own flows in a easy way. It's really easy to do thanks to [Go concurrency features](https://en.wikipedia.org/wiki/Go_(programming_language)#Concurrency:_goroutines_and_channels)
 
-# Disclamer
+# Disclaimer
 **I've coded it only for fun**. Please read the [LICENSE](./LICENSE). I hope you enjoy using it as much as I enjoyed building it. All ideas are welcome. Please let me know what you would add or change.
 
 # TODO
